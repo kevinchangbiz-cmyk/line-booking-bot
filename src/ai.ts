@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { config } from "./config.js";
 
 import type { ParsedMessage } from "./types.js";
+import { tryRuleBasedParse } from "./rules.js";
 
 
 
@@ -176,15 +177,16 @@ ${s.knowledge}
 
 
 function parseModelJson(raw: string): Partial<ParsedMessage> {
-
   const trimmed = raw.trim();
-
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
-
   const jsonStr = (fenced ? fenced[1] : trimmed).trim();
-
-  return JSON.parse(jsonStr) as Partial<ParsedMessage>;
-
+  try {
+    return JSON.parse(jsonStr) as Partial<ParsedMessage>;
+  } catch {
+    const obj = trimmed.match(/\{[\s\S]*\}/);
+    if (obj) return JSON.parse(obj[0]) as Partial<ParsedMessage>;
+    throw new Error("Gemini 回傳非 JSON");
+  }
 }
 
 
@@ -212,6 +214,12 @@ const fallback: ParsedMessage = {
 
 
 export async function analyze(userText: string): Promise<ParsedMessage> {
+  const ruled = tryRuleBasedParse(userText);
+  if (ruled) {
+    console.log(`[ai] 規則解析 -> ${ruled.intent} ${ruled.datetime ?? ""}`);
+    return ruled;
+  }
+
   const prompt = buildPrompt(userText);
   let lastErr: unknown;
 
@@ -233,18 +241,24 @@ export async function analyze(userText: string): Promise<ParsedMessage> {
     } catch (err) {
       lastErr = err;
       const msg = String(err);
-      const retryable = msg.includes("503") || msg.includes("429") || msg.includes("high demand");
+      const retryable =
+        msg.includes("503") ||
+        msg.includes("429") ||
+        msg.includes("high demand") ||
+        msg.includes("非 JSON");
       if (retryable && attempt < 2) {
-        console.warn(`[ai] Gemini 忙碌，${attempt + 1} 秒後重試…`);
+        console.warn(`[ai] Gemini 失敗，${attempt + 1} 秒後重試… (${msg.slice(0, 80)})`);
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         continue;
       }
-      console.error("[ai] Gemini 解析失敗：", err);
-      return fallback;
+      break;
     }
   }
 
-  console.error("[ai] Gemini 解析失敗：", lastErr);
+  console.error("[ai] Gemini 解析失敗，改用規則備援：", lastErr);
+  const fallbackRule = tryRuleBasedParse(userText);
+  if (fallbackRule) return fallbackRule;
+
   return fallback;
 }
 
