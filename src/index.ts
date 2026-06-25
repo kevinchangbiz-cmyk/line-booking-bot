@@ -139,17 +139,37 @@ app.get("/", (_req, res) => {
   res.send("LINE 預約機器人運作中 ✅");
 });
 
-app.post("/webhook", middleware(lineMiddlewareConfig), async (req, res) => {
+app.post("/webhook", middleware(lineMiddlewareConfig), (req, res) => {
   const events: WebhookEvent[] = req.body?.events ?? [];
-  try {
-    await Promise.all(events.map(handleEvent));
-  } catch (err) {
-    console.error("[webhook] 批次處理失敗：", err);
-  }
+  // 先回 200，避免 Gemini 處理過久或冷啟動時 LINE 逾時
   res.sendStatus(200);
+  void Promise.all(events.map(handleEvent)).catch((err) => {
+    console.error("[webhook] 批次處理失敗：", err);
+  });
+});
+
+// LINE 簽章驗證失敗（通常是 Render 的 LINE_CHANNEL_SECRET 與 Console 不一致）
+app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes("signature") || msg.includes("Signature")) {
+    console.error("[webhook] 簽章驗證失敗 — 請確認 Render 的 LINE_CHANNEL_SECRET 與 LINE Console 一致");
+    res.sendStatus(401);
+    return;
+  }
+  console.error("[webhook] 未預期錯誤：", err);
+  res.sendStatus(500);
 });
 
 app.listen(config.port, "0.0.0.0", () => {
   console.log(`✅ 伺服器啟動：0.0.0.0:${config.port}`);
   console.log(`   Webhook 路徑：POST /webhook`);
+  console.log(
+    cal.isConfigured()
+      ? "   Google 日曆：已連結 ✅"
+      : "   Google 日曆：未連結（預約僅 AI 回覆，不寫入日曆）",
+  );
 });

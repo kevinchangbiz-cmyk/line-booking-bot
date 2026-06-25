@@ -2,12 +2,14 @@ import { existsSync } from "fs";
 import { google, calendar_v3 } from "googleapis";
 import { config } from "./config.js";
 
+function hasCredentials(): boolean {
+  if (config.calendar.credentialsJson) return true;
+  return existsSync(config.calendar.credentialsPath);
+}
+
 /** Google 日曆金鑰與日曆 ID 是否已設定（未設定時跳過寫入，仍可用 AI 回覆） */
 export function isConfigured(): boolean {
-  return (
-    existsSync(config.calendar.credentialsPath) &&
-    !/^your_email@/i.test(config.calendar.calendarId)
-  );
+  return hasCredentials() && !/^your_email@/i.test(config.calendar.calendarId);
 }
 
 // 台灣固定 UTC+8（無日光節約），用於組 RFC3339 時間字串
@@ -17,10 +19,16 @@ let calendarClient: calendar_v3.Calendar | null = null;
 
 function getCalendar(): calendar_v3.Calendar {
   if (!calendarClient) {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: config.calendar.credentialsPath,
-      scopes: ["https://www.googleapis.com/auth/calendar"],
-    });
+    const scopes = ["https://www.googleapis.com/auth/calendar"];
+    const auth = config.calendar.credentialsJson
+      ? new google.auth.GoogleAuth({
+          credentials: JSON.parse(config.calendar.credentialsJson) as Record<string, unknown>,
+          scopes,
+        })
+      : new google.auth.GoogleAuth({
+          keyFile: config.calendar.credentialsPath,
+          scopes,
+        });
     calendarClient = google.calendar({ version: "v3", auth });
   }
   return calendarClient;

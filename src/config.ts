@@ -24,7 +24,10 @@ export const config = {
   },
 
   calendar: {
+    /** 本機：JSON 金鑰檔路徑；Render 等雲端可改用 GOOGLE_CREDENTIALS_JSON */
     credentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS ?? "./google-credentials.json",
+    /** 服務帳戶 JSON 全文（雲端部署用，勿進版控） */
+    credentialsJson: process.env.GOOGLE_CREDENTIALS_JSON?.trim() ?? "",
     calendarId: process.env.GOOGLE_CALENDAR_ID ?? "your_email@gmail.com",
     defaultDurationMin: Number(process.env.DEFAULT_DURATION_MIN ?? 60),
   },
