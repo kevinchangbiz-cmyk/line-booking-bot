@@ -3,7 +3,7 @@ import { middleware, type WebhookEvent } from "@line/bot-sdk";
 
 console.log("[boot] 啟動中… PORT=", process.env.PORT ?? "(未設，預設3000)");
 import { config } from "./config.js";
-import { lineMiddlewareConfig, reply } from "./line.js";
+import { lineMiddlewareConfig, reply, getDisplayName } from "./line.js";
 import { analyze } from "./ai.js";
 import * as cal from "./calendar.js";
 
@@ -105,8 +105,10 @@ async function handleEvent(event: WebhookEvent): Promise<void> {
           await reply(replyToken, `抱歉，${formatLocal(parsed.datetime)} 已經有人預約了😣 ${altText}`);
           return;
         }
+        const displayName = await getDisplayName(userId);
         await cal.createBooking({
           userId,
+          displayName,
           startLocal: parsed.datetime,
           durationMin: duration,
           people: parsed.people,

@@ -49,6 +49,8 @@ function toRFC3339(local: string): string {
 
 export interface BookingInput {
   userId: string;
+  /** LINE profile 顯示名稱（非官方帳號備註名） */
+  displayName?: string | null;
   startLocal: string; // YYYY-MM-DDTHH:mm:ss（Asia/Taipei）
   durationMin?: number;
   people: number;
@@ -94,15 +96,28 @@ export async function hasConflict(startLocal: string, durationMin: number): Prom
 export async function createBooking(input: BookingInput): Promise<string | null> {
   const duration = input.durationMin ?? config.calendar.defaultDurationMin;
   const endLocal = addMinutesLocal(input.startLocal, duration);
-  const summary = `LINE 預約 - ${input.people} 位${input.service ? ` ${input.service}` : ""}`;
+  const guestName = input.displayName?.trim() || "LINE 客人";
+  const serviceLabel = input.service ?? "預約";
+  const summary = `${guestName}｜${serviceLabel}`;
   const res = await getCalendar().events.insert({
     calendarId,
     requestBody: {
       summary,
-      description: `由 LINE 預約機器人建立\nLINE 使用者：${input.userId}`,
+      description: [
+        "由 LINE 預約機器人建立",
+        `預約者：${guestName}`,
+        `人數：${input.people} 位`,
+        `服務：${serviceLabel}`,
+        `LINE User ID：${input.userId}`,
+      ].join("\n"),
       start: { dateTime: toRFC3339(input.startLocal), timeZone: config.timezone },
       end: { dateTime: toRFC3339(endLocal), timeZone: config.timezone },
-      extendedProperties: { private: { lineUserId: input.userId } },
+      extendedProperties: {
+        private: {
+          lineUserId: input.userId,
+          lineDisplayName: guestName,
+        },
+      },
     },
   });
   return res.data.htmlLink ?? null;
