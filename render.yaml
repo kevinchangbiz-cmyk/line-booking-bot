@@ -4,8 +4,8 @@ services:
     name: line-booking-bot
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build
-    startCommand: npm run serve
+    buildCommand: npm install
+    startCommand: npm run render:start
     healthCheckPath: /
     envVars:
       - key: NODE_VERSION

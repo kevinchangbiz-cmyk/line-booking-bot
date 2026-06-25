@@ -1,5 +1,7 @@
 import express from "express";
 import { middleware, type WebhookEvent } from "@line/bot-sdk";
+
+console.log("[boot] 啟動中… PORT=", process.env.PORT ?? "(未設，預設3000)");
 import { config } from "./config.js";
 import { lineMiddlewareConfig, reply } from "./line.js";
 import { analyze } from "./ai.js";
