@@ -29,6 +29,21 @@ function formatLocal(local: string): string {
   return `${p.month}/${p.day}（${p.weekday}）${p.hour}:${p.minute}`;
 }
 
+function isClosedDay(local: string): boolean {
+  const day = new Date(`${local}${TZ_OFFSET}`).getDay(); // 0=日 1=一 … 6=六
+  return day === 0 || day === 1 || day === 3; // 週日、週一、週三公休
+}
+
+function isWithinBusinessHours(local: string, durationMin: number): boolean {
+  const time = local.split("T")[1] ?? "";
+  const hour = Number(time.slice(0, 2));
+  const minute = Number(time.slice(3, 5));
+  const startMin = hour * 60 + minute;
+  const openMin = config.store.openHour * 60;
+  const closeMin = config.store.closeHour * 60;
+  return startMin >= openMin && startMin + durationMin <= closeMin;
+}
+
 function isPast(local: string): boolean {
   return new Date(`${local}${TZ_OFFSET}`).getTime() < Date.now();
 }
@@ -62,6 +77,21 @@ async function handleEvent(event: WebhookEvent): Promise<void> {
           await reply(replyToken, "這個時間已經過囉，方便給我一個之後的時間嗎？😊");
           return;
         }
+        if (isClosedDay(parsed.datetime)) {
+          await reply(
+            replyToken,
+            `抱歉，${formatLocal(parsed.datetime).split("（")[1]?.replace("）", "") ?? "那天"}我們公休 😊\n本店營業：${config.store.hours}\n要不要改約週二、四、五、六的時段？`,
+          );
+          return;
+        }
+        const duration = config.calendar.defaultDurationMin;
+        if (!isWithinBusinessHours(parsed.datetime, duration)) {
+          await reply(
+            replyToken,
+            `這個時段不在營業時間內哦～我們是 ${config.store.hours}，您方便改約 ${config.store.openHour}:00–${config.store.closeHour - 1}:00 之間嗎？😊`,
+          );
+          return;
+        }
         if (!cal.isConfigured()) {
           await reply(
             replyToken,
@@ -69,7 +99,6 @@ async function handleEvent(event: WebhookEvent): Promise<void> {
           );
           return;
         }
-        const duration = config.calendar.defaultDurationMin;
         if (await cal.hasConflict(parsed.datetime, duration)) {
           const alts = altSlots(parsed.datetime);
           const altText = alts.length ? `鄰近的 ${alts.join(" 或 ")} 可以嗎？` : "要不要換個時段呢？";
@@ -83,7 +112,10 @@ async function handleEvent(event: WebhookEvent): Promise<void> {
           people: parsed.people,
           service: parsed.service,
         });
-        await reply(replyToken, parsed.reply);
+        await reply(
+          replyToken,
+          `${parsed.reply}\n\n✅ 已為您登記 ${formatLocal(parsed.datetime)} 的預約，期待見到您！`,
+        );
         return;
       }
 

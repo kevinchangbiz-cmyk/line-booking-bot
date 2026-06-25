@@ -9,12 +9,24 @@ function required(name: string): string {
   return v;
 }
 
+/** 偵測 Render 常見誤填：把多個 env 貼在同一個 Value 裡 */
+function requiredLineToken(name: string): string {
+  const v = required(name);
+  if (/\s/.test(v) || /LINE_CHANNEL_(SECRET|ACCESS)/.test(v)) {
+    console.error(
+      `[config] ${name} 格式錯誤：Value 只能放 token 本身，不可含空白或「LINE_CHANNEL_SECRET=…」`,
+    );
+    throw new Error(`${name} 格式錯誤，請在 Render 分別建立兩個環境變數`);
+  }
+  return v;
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   timezone: process.env.TIMEZONE ?? "Asia/Taipei",
 
   line: {
-    channelAccessToken: required("LINE_CHANNEL_ACCESS_TOKEN"),
+    channelAccessToken: requiredLineToken("LINE_CHANNEL_ACCESS_TOKEN"),
     channelSecret: required("LINE_CHANNEL_SECRET"),
   },
 

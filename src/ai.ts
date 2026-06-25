@@ -12,7 +12,7 @@ const model = genAI.getGenerativeModel({
 
   model: config.gemini.model,
 
-  generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
+  generationConfig: { responseMimeType: "application/json", temperature: 0.35 },
 
 });
 
@@ -102,9 +102,11 @@ ${s.knowledge}
 
 - 仔細閱讀客人訊息，reply 必須直接回答他們問的內容，不要答非所問。
 
-- 把相對時間（今天/明天/後天/這禮拜X/晚上X點…）換算成上面現在時間對應的絕對時間。
+- 把相對時間（今天/明天/後天/這禮拜X/早上9點/9:00…）換算成絕對時間，datetime 格式固定 YYYY-MM-DDTHH:mm:ss（24 小時制，需補 :00 秒）。
 
-- 沒講上下午時，依營業時段合理推斷（例如「三點」通常是 15:00）。
+- 只要訊息含「預約」且提到或暗示時間（如「明天9:00」「後天下午三點」）→ intent=book，並填 datetime；不要回「已滿」或「額滿」（系統會自行查日曆）。
+
+- reply 簡短清楚（2–4 句），像真人店員，直接回答問題。
 
 - 若客人要預約但時間不明確（如「這禮拜找個時間」），intent=book 且 datetime=null，並在 clarification 提出友善的回問，列出幾個可選時段。
 - 本店週一、週三、週日公休；若客人預約落在公休日，reply 禮貌說明並建議改約週二、四、五、六的 09:00–18:00 時段。
@@ -134,6 +136,10 @@ ${s.knowledge}
 - 「想預約聽力檢測」→ book, service=聽力檢測, reply 確認並詢問方便時段
 
 - 「想預約明天三點試戴助聽器」→ book, datetime=明天 15:00, service=助聽器試戴, reply 確認預約
+
+- 「預約明天9:00」→ book, datetime=明天 09:00:00, reply 確認明天早上 9 點預約
+
+- 「預約」→ book, datetime=null, clarification 詢問方便日期與時段
 
 - 「可以預約調音嗎」→ book, service=調音, reply 確認並詢問時間
 
@@ -206,41 +212,40 @@ const fallback: ParsedMessage = {
 
 
 export async function analyze(userText: string): Promise<ParsedMessage> {
+  const prompt = buildPrompt(userText);
+  let lastErr: unknown;
 
-  try {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const result = await model.generateContent(prompt);
+      const raw = result.response.text().trim();
+      const parsed = parseModelJson(raw);
 
-    const result = await model.generateContent(buildPrompt(userText));
-
-    const raw = result.response.text().trim();
-
-    const parsed = parseModelJson(raw);
-
-    return {
-
-      intent: parsed.intent ?? "unknown",
-
-      datetime: parsed.datetime ?? null,
-
-      people: typeof parsed.people === "number" && parsed.people > 0 ? parsed.people : 1,
-
-      service: parsed.service ?? null,
-
-      queryTopic: parsed.queryTopic ?? null,
-
-      clarification: parsed.clarification ?? null,
-
-      reply: parsed.reply?.trim() || fallback.reply,
-
-    };
-
-  } catch (err) {
-
-    console.error("[ai] Gemini 解析失敗：", err);
-
-    return fallback;
-
+      return {
+        intent: parsed.intent ?? "unknown",
+        datetime: parsed.datetime ?? null,
+        people: typeof parsed.people === "number" && parsed.people > 0 ? parsed.people : 1,
+        service: parsed.service ?? null,
+        queryTopic: parsed.queryTopic ?? null,
+        clarification: parsed.clarification ?? null,
+        reply: parsed.reply?.trim() || fallback.reply,
+      };
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err);
+      const retryable = msg.includes("503") || msg.includes("429") || msg.includes("high demand");
+      if (retryable && attempt < 2) {
+        console.warn(`[ai] Gemini 忙碌，${attempt + 1} 秒後重試…`);
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      console.error("[ai] Gemini 解析失敗：", err);
+      return fallback;
+    }
   }
 
+  console.error("[ai] Gemini 解析失敗：", lastErr);
+  return fallback;
 }
 
 

@@ -55,18 +55,39 @@ export interface BookingInput {
   service: string | null;
 }
 
-/** 該時段是否已有預約（衝突） */
+/** 該時段是否已有「計時」預約（衝突）。全天事件（例：假日標記）不算佔用。 */
 export async function hasConflict(startLocal: string, durationMin: number): Promise<boolean> {
   const endLocal = addMinutesLocal(startLocal, durationMin);
+  const bookingStart = new Date(toRFC3339(startLocal)).getTime();
+  const bookingEnd = new Date(toRFC3339(endLocal)).getTime();
+
   const res = await getCalendar().events.list({
     calendarId,
     timeMin: toRFC3339(startLocal),
     timeMax: toRFC3339(endLocal),
     singleEvents: true,
     orderBy: "startTime",
-    maxResults: 1,
+    maxResults: 20,
   });
-  return (res.data.items?.length ?? 0) > 0;
+
+  for (const ev of res.data.items ?? []) {
+    if (ev.status === "cancelled") continue;
+    if (ev.transparency === "transparent") continue;
+    // 全天事件（只有 date、沒有 dateTime）不視為時段衝突
+    if (ev.start?.date && !ev.start?.dateTime) continue;
+
+    const evStartStr = ev.start?.dateTime;
+    const evEndStr = ev.end?.dateTime;
+    if (!evStartStr || !evEndStr) continue;
+
+    const evStart = new Date(evStartStr).getTime();
+    const evEnd = new Date(evEndStr).getTime();
+    if (evStart < bookingEnd && evEnd > bookingStart) {
+      console.log(`[calendar] 時段衝突：${ev.summary ?? "(無標題)"} ${evStartStr}`);
+      return true;
+    }
+  }
+  return false;
 }
 
 /** 建立預約，回傳事件連結 */
