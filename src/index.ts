@@ -147,7 +147,7 @@ app.post("/webhook", middleware(lineMiddlewareConfig), async (req, res) => {
   res.sendStatus(200);
 });
 
-app.listen(config.port, () => {
-  console.log(`✅ 伺服器啟動：http://localhost:${config.port}`);
+app.listen(config.port, "0.0.0.0", () => {
+  console.log(`✅ 伺服器啟動：0.0.0.0:${config.port}`);
   console.log(`   Webhook 路徑：POST /webhook`);
 });

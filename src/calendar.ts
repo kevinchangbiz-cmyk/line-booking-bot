@@ -13,11 +13,19 @@ export function isConfigured(): boolean {
 // 台灣固定 UTC+8（無日光節約），用於組 RFC3339 時間字串
 const TZ_OFFSET = "+08:00";
 
-const auth = new google.auth.GoogleAuth({
-  keyFile: config.calendar.credentialsPath,
-  scopes: ["https://www.googleapis.com/auth/calendar"],
-});
-const calendar = google.calendar({ version: "v3", auth });
+let calendarClient: calendar_v3.Calendar | null = null;
+
+function getCalendar(): calendar_v3.Calendar {
+  if (!calendarClient) {
+    const auth = new google.auth.GoogleAuth({
+      keyFile: config.calendar.credentialsPath,
+      scopes: ["https://www.googleapis.com/auth/calendar"],
+    });
+    calendarClient = google.calendar({ version: "v3", auth });
+  }
+  return calendarClient;
+}
+
 const calendarId = config.calendar.calendarId;
 
 /** 在不含時區的本地時間字串上加分鐘，回傳同樣不含時區的字串 */
@@ -42,7 +50,7 @@ export interface BookingInput {
 /** 該時段是否已有預約（衝突） */
 export async function hasConflict(startLocal: string, durationMin: number): Promise<boolean> {
   const endLocal = addMinutesLocal(startLocal, durationMin);
-  const res = await calendar.events.list({
+  const res = await getCalendar().events.list({
     calendarId,
     timeMin: toRFC3339(startLocal),
     timeMax: toRFC3339(endLocal),
@@ -58,7 +66,7 @@ export async function createBooking(input: BookingInput): Promise<string | null>
   const duration = input.durationMin ?? config.calendar.defaultDurationMin;
   const endLocal = addMinutesLocal(input.startLocal, duration);
   const summary = `LINE 預約 - ${input.people} 位${input.service ? ` ${input.service}` : ""}`;
-  const res = await calendar.events.insert({
+  const res = await getCalendar().events.insert({
     calendarId,
     requestBody: {
       summary,
@@ -73,7 +81,7 @@ export async function createBooking(input: BookingInput): Promise<string | null>
 
 /** 找出該使用者「接下來最近」的一筆預約 */
 async function findNextEvent(userId: string): Promise<calendar_v3.Schema$Event | null> {
-  const res = await calendar.events.list({
+  const res = await getCalendar().events.list({
     calendarId,
     privateExtendedProperty: [`lineUserId=${userId}`],
     timeMin: new Date().toISOString(),
@@ -88,7 +96,7 @@ async function findNextEvent(userId: string): Promise<calendar_v3.Schema$Event |
 export async function cancelNext(userId: string): Promise<string | null> {
   const ev = await findNextEvent(userId);
   if (!ev?.id) return null;
-  await calendar.events.delete({ calendarId, eventId: ev.id });
+  await getCalendar().events.delete({ calendarId, eventId: ev.id });
   return ev.start?.dateTime ?? ev.start?.date ?? null;
 }
 
@@ -101,7 +109,7 @@ export async function rescheduleNext(
   const ev = await findNextEvent(userId);
   if (!ev?.id) return null;
   const endLocal = addMinutesLocal(newStartLocal, durationMin);
-  const res = await calendar.events.patch({
+  const res = await getCalendar().events.patch({
     calendarId,
     eventId: ev.id,
     requestBody: {

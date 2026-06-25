@@ -2,7 +2,10 @@ import "dotenv/config";
 
 function required(name: string): string {
   const v = process.env[name];
-  if (!v) throw new Error(`缺少環境變數 ${name}，請參考 .env.example 設定 .env`);
+  if (!v) {
+    console.error(`[config] 缺少環境變數: ${name}`);
+    throw new Error(`缺少環境變數 ${name}，請參考 .env.example 設定 .env`);
+  }
   return v;
 }
 
