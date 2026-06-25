@@ -28,6 +28,32 @@ function addDays(base: { y: string; m: string; d: string }, days: number): strin
   return fmt.format(dt);
 }
 
+function parseChineseNumber(raw: string): number | null {
+  const s = raw.trim();
+  if (/^\d{1,2}$/.test(s)) return Number(s);
+
+  const digit: Record<string, number> = {
+    零: 0,
+    一: 1,
+    二: 2,
+    兩: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+  };
+
+  if (s === "十") return 10;
+  if (s.startsWith("十") && s.length === 2) return 10 + (digit[s[1]] ?? 0);
+  if (s.endsWith("十") && s.length === 2) return (digit[s[0]] ?? 0) * 10;
+  if (s.length === 3 && s[1] === "十") return (digit[s[0]] ?? 0) * 10 + (digit[s[2]] ?? 0);
+  return digit[s] ?? null;
+}
+
 function parseDate(text: string): string | null {
   const base = todayInTaipei();
   if (/今天|今日/.test(text)) return `${base.y}-${base.m}-${base.d}`;
@@ -43,21 +69,30 @@ function parseTime(text: string): { h: number; min: number } | null {
   const colon = text.match(/(\d{1,2})\s*[:：]\s*(\d{2})/);
   if (colon) return { h: Number(colon[1]), min: Number(colon[2]) };
 
-  const dian = text.match(/(\d{1,2})\s*點\s*(\d{1,2})?\s*分?/);
-  if (dian) return { h: Number(dian[1]), min: dian[2] ? Number(dian[2]) : 0 };
+  const half = text.match(/(\d{1,2}|[一二三四五六七八九十兩两]+)\s*點半/);
+  if (half) {
+    const h = parseChineseNumber(half[1]);
+    if (h !== null) return { h, min: 30 };
+  }
 
-  const period = text.match(/(早上|上午|中午|下午|晚上|傍晚)\s*(\d{1,2})\s*[點:：]?/);
+  const dian = text.match(/(\d{1,2}|[一二三四五六七八九十兩两]+)\s*點\s*(\d{1,2})?\s*分?/);
+  if (dian) {
+    const h = parseChineseNumber(dian[1]);
+    if (h !== null) return { h, min: dian[2] ? Number(dian[2]) : 0 };
+  }
+
+  const period = text.match(
+    /(早上|上午|中午|下午|晚上|傍晚)\s*(\d{1,2}|[一二三四五六七八九十兩两]+)\s*點/,
+  );
   if (period) {
-    let h = Number(period[2]);
+    const h0 = parseChineseNumber(period[2]);
+    if (h0 === null) return null;
+    let h = h0;
     const p = period[1];
     if ((p === "下午" || p === "晚上" || p === "傍晚") && h < 12) h += 12;
     if (p === "中午" && h < 11) h = 12;
     return { h, min: 0 };
   }
-
-  // 「9點半」
-  const half = text.match(/(\d{1,2})\s*點半/);
-  if (half) return { h: Number(half[1]), min: 30 };
 
   return null;
 }
@@ -72,6 +107,98 @@ const baseReply = {
   queryTopic: null as ParsedMessage["queryTopic"],
   clarification: null as string | null,
 };
+
+function parseBookingService(text: string): string | null {
+  if (/聽力|檢測/.test(text)) return "聽力檢測";
+  if (/試戴|選配/.test(text)) return "助聽器試戴";
+  if (/調音/.test(text)) return "調音";
+  if (/保養/.test(text)) return "保養";
+  if (/維修|修理|故障/.test(text)) return "維修";
+  return null;
+}
+
+function parseBookingDatetime(text: string): string | null {
+  const time = parseTime(text);
+  if (!time) return null;
+  const date = parseDate(text) ?? addDays(todayInTaipei(), 1);
+  return toDatetime(date, time);
+}
+
+/** 助聽器常見問題（Gemini 額度不足時仍可用） */
+function tryTroubleshootingParse(text: string): ParsedMessage | null {
+  const t = text.trim();
+
+  if (/沒聲音|無聲|聽不到|不出聲|沒聲響/.test(t)) {
+    return {
+      ...baseReply,
+      intent: "chitchat",
+      datetime: null,
+      reply:
+        "助聽器沒聲音可先試這幾步：\n1️⃣ 確認有開機、電池有電或已充飽\n2️⃣ 檢查音量是否調太低\n3️⃣ 看喇叭口/耳模是否被耳垢堵住\n若仍無聲，歡迎預約回店檢查或保養 😊",
+    };
+  }
+
+  if (/雜音|噪音|嘯叫|尖銳聲|吱吱/.test(t)) {
+    return {
+      ...baseReply,
+      intent: "chitchat",
+      datetime: null,
+      reply:
+        "有雜音或嘯叫可能與耳垢、配戴角度或需重新調音有關。可先清潔耳模/喇叭口，確認配戴是否密合。若仍困擾，建議預約回店由聽力師協助調音 🙏",
+    };
+  }
+
+  if (/小聲|聲音太小|聽不清楚|變小聲/.test(t)) {
+    return {
+      ...baseReply,
+      intent: "chitchat",
+      datetime: null,
+      reply:
+        "音量變小可先檢查：電池電量、音量設定、耳垢是否堵塞。若排除後仍小聲，可能是聽力變化或需調音，歡迎預約回店檢測 😊",
+    };
+  }
+
+  if (/故障|壞了|不能用|異常|當機/.test(t) && /助聽器|耳掛|耳內|機器/.test(t)) {
+    return {
+      ...baseReply,
+      intent: "chitchat",
+      datetime: null,
+      reply:
+        "了解，助聽器故障我們可以協助排查 🔧\n請先試：重開機、換電池/充電、檢查耳模與喇叭口是否堵塞。\n若仍異常，歡迎預約帶回店內檢測維修，或來電 04-705-5028 與我們聯絡。",
+    };
+  }
+
+  if (/故障|壞了|維修/.test(t)) {
+    return {
+      ...baseReply,
+      intent: "chitchat",
+      datetime: null,
+      reply:
+        "若助聽器有故障，歡迎預約回店檢測維修，或告訴我症狀（沒聲音、雜音、小聲等），我先幫您簡單排查 😊",
+    };
+  }
+
+  if (/電池|充電|沒電/.test(t)) {
+    return {
+      ...baseReply,
+      intent: "chitchat",
+      datetime: null,
+      reply:
+        "電池式：確認電池方向正確、倉蓋有關好，可換新電池試試。充電式：確認充電座接觸良好，充飽後再試。需要電池或充電配件，歡迎來店或預約 😊",
+    };
+  }
+
+  if (/助聽器|聽力|耳鳴|聽不清/.test(t)) {
+    return {
+      ...baseReply,
+      intent: "chitchat",
+      datetime: null,
+      reply: `我是${config.store.name}的店員，可以協助您：\n• 助聽器選配、試戴、調音、保養、維修\n• 聽力檢測預約\n• 簡單故障排查\n請告訴我您的狀況，或輸入「預約」安排來店 😊`,
+    };
+  }
+
+  return null;
+}
 
 /**
  * 不依賴 Gemini 的規則解析（Gemini 503 / 金鑰錯誤時的備援，也加速常見預約句型）
@@ -90,17 +217,13 @@ export function tryRuleBasedParse(userText: string): ParsedMessage | null {
   }
 
   if (/改約|改時間|換時間|更改預約/.test(t)) {
-    const date = parseDate(t);
-    const time = parseTime(t);
-    const datetime = date && time ? toDatetime(date, time) : null;
+    const datetime = parseBookingDatetime(t);
     return {
       ...baseReply,
       intent: "reschedule",
       datetime,
       clarification: datetime ? null : "沒問題，您想改到哪一天、幾點呢？",
-      reply: datetime
-        ? `好的，我來幫您改約到新時段。`
-        : "沒問題，您想改到哪一天、幾點呢？",
+      reply: datetime ? `好的，我來幫您改約到新時段。` : "沒問題，您想改到哪一天、幾點呢？",
     };
   }
 
@@ -134,18 +257,20 @@ export function tryRuleBasedParse(userText: string): ParsedMessage | null {
     };
   }
 
-  if (/預約|預定|想約|我要約|約一下/.test(t)) {
-    const date = parseDate(t) ?? addDays(todayInTaipei(), 1); // 只有時間時預設明天
-    const time = parseTime(t);
-    const hasDateKeyword = /今天|今日|明天|明日|後天|后天|大後天|\d{1,2}[\/\-月]/.test(t);
-    const datetime = time ? toDatetime(hasDateKeyword ? (parseDate(t) ?? date) : date, time) : null;
+  if (/^預約$|^預定$|^想約$|^我要約$/.test(t)) {
+    return {
+      ...baseReply,
+      intent: "book",
+      datetime: null,
+      service: null,
+      clarification: `請問您方便的日期與時段？我們營業：${config.store.hours}`,
+      reply: `好的，很樂意幫您預約！請問您方便的日期與時段？例如「明天早上九點」。我們營業：${config.store.hours} 😊`,
+    };
+  }
 
-    let service: string | null = null;
-    if (/聽力|檢測/.test(t)) service = "聽力檢測";
-    else if (/試戴|選配/.test(t)) service = "助聽器試戴";
-    else if (/調音/.test(t)) service = "調音";
-    else if (/保養/.test(t)) service = "保養";
-    else if (/維修|修理/.test(t)) service = "維修";
+  if (/預約|預定|想約|我要約|約一下/.test(t)) {
+    const datetime = parseBookingDatetime(t);
+    const service = parseBookingService(t);
 
     if (datetime) {
       return {
@@ -163,11 +288,11 @@ export function tryRuleBasedParse(userText: string): ParsedMessage | null {
       datetime: null,
       service,
       clarification: `請問您方便的日期與時段？我們營業時間：${config.store.hours}`,
-      reply: `好的，很樂意幫您預約${service ? ` ${service}` : ""}！請問您方便的日期與時段？我們營業：${config.store.hours} 😊`,
+      reply: `好的，很樂意幫您預約${service ? ` ${service}` : ""}！請問您方便的日期與時段？例如「明天早上九點」。我們營業：${config.store.hours} 😊`,
     };
   }
 
-  if (/^你好|^您好|^嗨|^哈囉/.test(t)) {
+  if (/^你好$|^您好$|^嗨$|^哈囉$/.test(t)) {
     return {
       ...baseReply,
       intent: "chitchat",
@@ -176,5 +301,5 @@ export function tryRuleBasedParse(userText: string): ParsedMessage | null {
     };
   }
 
-  return null;
+  return tryTroubleshootingParse(t);
 }

@@ -220,10 +220,11 @@ export async function analyze(userText: string): Promise<ParsedMessage> {
     return ruled;
   }
 
+  // 常見句型應已由規則處理；其餘才呼叫 Gemini（避免免費額度快速耗盡）
   const prompt = buildPrompt(userText);
   let lastErr: unknown;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const result = await model.generateContent(prompt);
       const raw = result.response.text().trim();
@@ -241,13 +242,15 @@ export async function analyze(userText: string): Promise<ParsedMessage> {
     } catch (err) {
       lastErr = err;
       const msg = String(err);
+      const quotaHit = msg.includes("429") || msg.includes("quota") || msg.includes("Quota");
+      if (quotaHit) {
+        console.warn("[ai] Gemini 額度不足，略過重試");
+        break;
+      }
       const retryable =
-        msg.includes("503") ||
-        msg.includes("429") ||
-        msg.includes("high demand") ||
-        msg.includes("非 JSON");
-      if (retryable && attempt < 2) {
-        console.warn(`[ai] Gemini 失敗，${attempt + 1} 秒後重試… (${msg.slice(0, 80)})`);
+        msg.includes("503") || msg.includes("high demand") || msg.includes("非 JSON");
+      if (retryable && attempt < 1) {
+        console.warn(`[ai] Gemini 失敗，${attempt + 1} 秒後重試…`);
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         continue;
       }
@@ -255,10 +258,7 @@ export async function analyze(userText: string): Promise<ParsedMessage> {
     }
   }
 
-  console.error("[ai] Gemini 解析失敗，改用規則備援：", lastErr);
-  const fallbackRule = tryRuleBasedParse(userText);
-  if (fallbackRule) return fallbackRule;
-
+  console.error("[ai] Gemini 解析失敗：", lastErr);
   return fallback;
 }
 
