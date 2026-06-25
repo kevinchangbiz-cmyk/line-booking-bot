@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+
+# Google 服務帳戶金鑰，切勿進版控
+google-credentials.json
+credentials.json

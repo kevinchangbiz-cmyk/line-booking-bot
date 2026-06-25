@@ -1,0 +1,12 @@
+# Render 一鍵部署：https://render.com → New → Blueprint
+services:
+  - type: web
+    name: line-booking-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run serve
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
